@@ -1,0 +1,675 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kontrol Gardu Induk</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Menggunakan MQTT.js untuk koneksi broker -->
+    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+    <!-- Menggunakan Tone.js untuk peringatan suara -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-image: url('https://placehold.co/1920x1080/1f2937/d1d5db?text=Gardu+Induk');
+            background-size: cover;
+            background-position: center;
+            background-repeat: no-repeat;
+            background-attachment: fixed;
+            position: relative;
+            z-index: 1;
+        }
+        body::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: rgba(17, 24, 39, 0.90);
+            z-index: -1;
+        }
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 50px;
+            height: 28px;
+        }
+        .switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #000000;
+            border: 1px solid #4b5563;
+            transition: .4s;
+            border-radius: 28px;
+        }
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 20px;
+            width: 20px;
+            left: 4px;
+            bottom: 4px;
+            background-color: white;
+            transition: .4s;
+            border-radius: 50%;
+        }
+        input:checked + .slider {
+            background-color: #e53e3e; /* Warna merah untuk ON */
+            border: 1px solid #e53e3e;
+        }
+        input:disabled + .slider {
+            cursor: not-allowed;
+            background-color: #374151;
+        }
+        input:checked + .slider:before {
+            transform: translateX(22px);
+        }
+        .card {
+            background-color: rgba(31, 41, 55, 0.75);
+            border: 1px solid #374151;
+            backdrop-filter: blur(4px);
+        }
+        .card-title {
+            color: #60a5fa;
+        }
+        .control-label {
+            font-size: 0.8rem;
+            color: #d1d5db;
+        }
+        #svg-container {
+            touch-action: none; /* Disable default touch actions */
+        }
+        #svg-container svg {
+            width: 100%;
+            height: auto;
+        }
+        .blink {
+            animation: blink 1s infinite;
+        }
+        @keyframes blink {
+            0% { opacity: 1; }
+            50% { opacity: 0.2; }
+            100% { opacity: 1; }
+        }
+        /* Style untuk garis aliran daya */
+        .power-flow {
+            stroke-dasharray: 5, 5;
+            animation: dash 1s linear infinite;
+        }
+        @keyframes dash {
+            to {
+                stroke-dashoffset: -100;
+            }
+        }
+        .data-panel {
+            background-color: rgba(17, 24, 39, 0.5);
+            padding: 8px;
+            border-radius: 6px;
+            margin-top: 10px;
+            border: 1px solid #374151;
+            font-size: 0.85rem;
+        }
+        .data-panel p {
+            margin: 0;
+            padding: 2px 0;
+        }
+        /* Style untuk log events */
+        .notification-container {
+            max-height: 200px;
+            overflow-y: auto;
+            font-size: 0.8rem;
+        }
+        .notification-entry {
+            border-bottom: 1px solid #374151;
+            padding: 4px 0;
+        }
+        .notification-entry:last-child {
+            border-bottom: none;
+        }
+        .notification-error {
+            color: #ff4d4d;
+        }
+        .notification-info {
+            color: #60a5fa;
+        }
+        .notification-success {
+            color: #38a169;
+        }
+    </style>
+    <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
+</head>
+<body class="text-white p-4">
+
+    <div class="max-w-7xl mx-auto">
+        <h1 class="text-2xl font-bold text-center mb-4">Monitoring Gardu Induk</h1>
+        
+        <div id="connection-status" class="text-center mb-4 p-2 rounded-md bg-yellow-600 text-white transition-all">
+            Menghubungkan ke Broker MQTT...
+        </div>
+        
+        <div id="error-message" class="hidden text-center mb-4 p-3 rounded-md bg-red-600 text-white font-bold transition-all"></div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            
+            <!-- Kolom Kontrol -->
+            <div class="lg:col-span-5">
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <!-- Bay Line 1 -->
+                    <div class="card rounded-lg p-4">
+                        <h2 class="card-title text-lg font-bold mb-3">Bay Line 1</h2>
+                        <div class="grid grid-cols-2 gap-4">
+                            <div class="flex flex-col items-center"><span class="control-label mb-1">PMS Line</span><label class="switch"><input type="checkbox" id="switch-line" data-topic="line"><span class="slider"></span></label></div>
+                            <div class="flex flex-col items-center"><span class="control-label mb-1">PMT</span><label class="switch"><input type="checkbox" id="switch-pmt" data-topic="pmt"><span class="slider"></span></label></div>
+                            <div class="flex flex-col items-center"><span class="control-label mb-1">PMS Bus 1</span><label class="switch"><input type="checkbox" id="switch-bus1" data-topic="bus1"><span class="slider"></span></label></div>
+                            <div class="flex flex-col items-center"><span class="control-label mb-1">PMS Bus 2</span><label class="switch"><input type="checkbox" id="switch-bus2" data-topic="bus2"><span class="slider"></span></label></div>
+                        </div>
+                        <div class="data-panel" id="data-panel-line1">
+                            <p>Tegangan: <span id="data-line1-voltage">0</span> kV</p>
+                            <p>Arus: <span id="data-line1-current">0</span> A</p>
+                            <p>Daya: <span id="data-line1-power">0</span> MW</p>
+                        </div>
+                    </div>
+
+                    <!-- Bay Line 2 -->
+                    <div class="card rounded-lg p-4">
+                        <h2 class="card-title text-lg font-bold mb-3">Bay Line 2</h2>
+                        <div class="grid grid-cols-2 gap-4">
+                            <div class="flex flex-col items-center"><span class="control-label mb-1">PMS Line</span><label class="switch"><input type="checkbox" id="switch-line2" data-topic="line2"><span class="slider"></span></label></div>
+                            <div class="flex flex-col items-center"><span class="control-label mb-1">PMT (Bay 2)</span><label class="switch"><input type="checkbox" id="switch-pmt2" data-topic="pmt2"><span class="slider"></span></label></div>
+                            <div class="flex flex-col items-center"><span class="control-label mb-1">PMS Bus 1</span><label class="switch"><input type="checkbox" id="switch-bus1_2" data-topic="bus1_2"><span class="slider"></span></label></div>
+                            <div class="flex flex-col items-center"><span class="control-label mb-1">PMS Bus 2</span><label class="switch"><input type="checkbox" id="switch-bus2_2" data-topic="bus2_2"><span class="slider"></span></label></div>
+                        </div>
+                        <div class="data-panel" id="data-panel-line2">
+                            <p>Tegangan: <span id="data-line2-voltage">0</span> kV</p>
+                            <p>Arus: <span id="data-line2-current">0</span> A</p>
+                            <p>Daya: <span id="data-line2-power">0</span> MW</p>
+                        </div>
+                    </div>
+
+                    <!-- Bay Trafo -->
+                    <div class="card rounded-lg p-4">
+                        <h2 class="card-title text-lg font-bold mb-3">Bay Trafo</h2>
+                        <div class="grid grid-cols-2 gap-4">
+                            <div class="flex flex-col items-center"><span class="control-label mb-1">PMT TRAFO</span><label class="switch"><input type="checkbox" id="switch-pmt_trafo" data-topic="pmt_trafo"><span class="slider"></span></label></div>
+                            <div class="flex flex-col items-center"><span class="control-label mb-1">Trafo Bus 1</span><label class="switch"><input type="checkbox" id="switch-trafo_bus1" data-topic="trafo_bus1"><span class="slider"></span></label></div>
+                            <div class="flex flex-col items-center"><span class="control-label mb-1">Trafo Bus 2</span><label class="switch"><input type="checkbox" id="switch-trafo_bus2" data-topic="trafo_bus2"><span class="slider"></span></label></div>
+                        </div>
+                        <div class="data-panel" id="data-panel-trafo">
+                            <p>Tegangan: <span id="data-trafo-voltage">0</span> kV</p>
+                            <p>Arus: <span id="data-trafo-current">0</span> A</p>
+                            <p>Daya: <span id="data-trafo-power">0</span> MW</p>
+                        </div>
+                    </div>
+
+                    <!-- Bay Kopel -->
+                    <div class="card rounded-lg p-4">
+                        <h2 class="card-title text-lg font-bold mb-3">Bay Kopel</h2>
+                        <div class="grid grid-cols-2 gap-4">
+                            <div class="flex flex-col items-center"><span class="control-label mb-1">Kopel Bus 1</span><label class="switch"><input type="checkbox" id="switch-kopel_bus1" data-topic="kopel_bus1"><span class="slider"></span></label></div>
+                            <div class="flex flex-col items-center"><span class="control-label mb-1">Kopel Bus 2</span><label class="switch"><input type="checkbox" id="switch-kopel_bus2" data-topic="kopel_bus2"><span class="slider"></span></label></div>
+                            <div class="flex flex-col items-center col-span-2"><span class="control-label mb-1">PMT Kopel</span><label class="switch"><input type="checkbox" id="switch-pmt_kopel" data-topic="pmt_kopel"><span class="slider"></span></label></div>
+                        </div>
+                        <div class="data-panel" id="data-panel-kopel">
+                            <p>Tegangan: <span id="data-kopel-voltage">0</span> kV</p>
+                            <p>Arus: <span id="data-kopel-current">0</span> A</p>
+                            <p>Daya: <span id="data-kopel-power">0</span> MW</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Status dan Notifikasi -->
+                <div class="card rounded-lg p-4 mt-6">
+                    <h2 class="card-title text-lg font-bold mb-3">Status dan Notifikasi</h2>
+                    <div id="event-log" class="notification-container">
+                        <!-- Log events will be appended here -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- Kolom SLD -->
+            <div class="lg:col-span-7">
+                <!-- SVG Container -->
+                <div class="card rounded-lg p-4" id="svg-container">
+                    <!-- SVG akan dimasukkan di sini oleh JavaScript -->
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // Cek apakah sudah login
+    if (localStorage.getItem("isLoggedIn") !== "true") {
+        window.location.href = "login.html"; // kalau belum login, arahkan ke halaman login
+    }
+        document.addEventListener('DOMContentLoaded', () => {
+            // --- Konfigurasi ---
+            // Mengubah broker MQTT ke server publik yang lebih stabil
+            const brokerUrl = 'wss://broker.emqx.io:8084/mqtt';
+            const topics = [
+                "line", "pmt", "bus1", "bus2",
+                "line2", "pmt2", "bus1_2", "bus2_2",
+                "pmt_trafo", "trafo_bus1", "trafo_bus2",
+                "kopel_bus1", "kopel_bus2", "pmt_kopel",
+                // Topik baru untuk data real-time (simulasi)
+                "data/line1", "data/line2", "data/trafo", "data/kopel"
+            ];
+            
+            // --- Elemen UI ---
+            const connectionStatusEl = document.getElementById('connection-status');
+            const errorMessageEl = document.getElementById('error-message');
+            const svgContainer = document.getElementById('svg-container');
+            const switches = document.querySelectorAll('.switch input[type="checkbox"]');
+            const eventLogEl = document.getElementById('event-log');
+
+            // --- State Management ---
+            let client;
+            let state = {
+                line: "off", pmt: "off", bus1: "off", bus2: "off",
+                line2: "off", pmt2: "off", bus1_2: "off", bus2_2: "off",
+                pmt_trafo: "off", trafo_bus1: "off", trafo_bus2: "off",
+                kopel_bus1: "off", kopel_bus2: "off", pmt_kopel: "off"
+            };
+            let errorTimeout;
+
+            // --- Peringatan Suara ---
+            let synth = null;
+            function playErrorSound() {
+                if (!synth) {
+                    synth = new Tone.Synth().toDestination();
+                }
+                synth.triggerAttackRelease("C4", "8n");
+            }
+
+            // --- Status dan Notifikasi ---
+            function addNotification(message, type = 'info') {
+                const now = new Date();
+                const timeString = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
+                const notificationEntry = document.createElement('div');
+                notificationEntry.classList.add('notification-entry');
+                notificationEntry.innerHTML = `<span class="text-gray-400">[${timeString}]</span> <span class="notification-${type}">${message}</span>`;
+                eventLogEl.prepend(notificationEntry); // Tambahkan di bagian atas
+                if (eventLogEl.children.length > 50) {
+                    eventLogEl.removeChild(eventLogEl.lastElementChild);
+                }
+            }
+
+            // --- Inisialisasi SLD dan Interaktivitas SVG ---
+            function initializeSLD() {
+                // Menyiapkan SVG untuk diagram SLD
+                svgContainer.innerHTML = `
+                <svg viewBox="0 0 700 500" width="100%" height="auto" xmlns="http://www.w3.org/2000/svg">
+                    <g id="svg-content-group">
+                        <!-- Garis busbar -->
+                        <line id="sld-busbar1" x1="60" y1="250" x2="640" y2="250" stroke="#d1d5db" stroke-width="4"/>
+                        <line id="sld-busbar2" x1="60" y1="260" x2="640" y2="260" stroke="#d1d5db" stroke-width="4"/>
+                        <text x="350" y="240" font-family="Inter" font-size="12" fill="#d1d5db" text-anchor="middle">BUSBAR 1</text>
+                        <text x="350" y="275" font-family="Inter" font-size="12" fill="#d1d5db" text-anchor="middle">BUSBAR 2</text>
+                        
+                        <!-- Bay Line 1 -->
+                        <g data-component="line1">
+                            <text x="120" y="55" font-family="Inter" font-size="12" fill="#60a5fa" text-anchor="middle">Line 1</text>
+                            <line id="sld-line-b1-1" x1="120" y1="90" x2="120" y2="120" stroke="#d1d5db" stroke-width="2"/>
+                            <polygon id="sld-pms-line-b1" points="120,70 110,80 120,90 130,80" fill="#d1d5db"/>
+                            <text x="120" y="87" font-family="Inter" font-size="8" fill="black" text-anchor="middle">PMS</text>
+                            <rect id="sld-pmt-b1" x="110" y="120" width="20" height="20" fill="#d1d5db"/>
+                            <text x="120" y="135" font-family="Inter" font-size="8" fill="black" text-anchor="middle">PMT</text>
+                            <line id="sld-line-b1-2" x1="120" y1="140" x2="120" y2="160" stroke="#d1d5db" stroke-width="2"/>
+                            <line id="sld-line-b1-3" x1="90" y1="160" x2="150" y2="160" stroke="#d1d5db" stroke-width="2"/>
+                            <polygon id="sld-pms-bus1-b1" points="90,160 80,170 90,180 100,170" fill="#d1d5db"/>
+                            <text x="90" y="177" font-family="Inter" font-size="8" fill="black" text-anchor="middle">PMS</text>
+                            <line id="sld-line-bus1-b1" x1="90" y1="180" x2="90" y2="250" stroke="#d1d5db" stroke-width="2"/>
+                            <polygon id="sld-pms-bus2-b1" points="150,160 140,170 150,180 160,170" fill="#d1d5db"/>
+                            <text x="150" y="177" font-family="Inter" font-size="8" fill="black" text-anchor="middle">PMS</text>
+                            <line id="sld-line-bus2-b1" x1="150" y1="180" x2="150" y2="260" stroke="#d1d5db" stroke-width="2"/>
+                        </g>
+
+                        <!-- Bay Line 2 -->
+                        <g data-component="line2">
+                            <text x="400" y="55" font-family="Inter" font-size="12" fill="#60a5fa" text-anchor="middle">Line 2</text>
+                            <line id="sld-line-b2-1" x1="400" y1="90" x2="400" y2="120" stroke="#d1d5db" stroke-width="2"/>
+                            <polygon id="sld-pms-line-b2" points="400,70 390,80 400,90 410,80" fill="#d1d5db"/>
+                            <text x="400" y="87" font-family="Inter" font-size="8" fill="black" text-anchor="middle">PMS</text>
+                            <rect id="sld-pmt-b2" x="390" y="120" width="20" height="20" fill="#d1d5db"/>
+                            <text x="400" y="135" font-family="Inter" font-size="8" fill="black" text-anchor="middle">PMT</text>
+                            <line id="sld-line-b2-2" x1="400" y1="140" x2="400" y2="160" stroke="#d1d5db" stroke-width="2"/>
+                            <line id="sld-line-b2-3" x1="370" y1="160" x2="430" y2="160" stroke="#d1d5db" stroke-width="2"/>
+                            <polygon id="sld-pms-bus1-b2" points="370,160 360,170 370,180 380,170" fill="#d1d5db"/>
+                            <text x="370" y="177" font-family="Inter" font-size="8" fill="black" text-anchor="middle">PMS</text>
+                            <line id="sld-line-bus1-b2" x1="370" y1="180" x2="370" y2="250" stroke="#d1d5db" stroke-width="2"/>
+                            <polygon id="sld-pms-bus2-b2" points="430,160 420,170 430,180 440,170" fill="#d1d5db"/>
+                            <text x="430" y="177" font-family="Inter" font-size="8" fill="black" text-anchor="middle">PMS</text>
+                            <line id="sld-line-bus2-b2" x1="430" y1="180" x2="430" y2="260" stroke="#d1d5db" stroke-width="2"/>
+                        </g>
+
+                        <!-- Bay Trafo -->
+                        <g data-component="trafo">
+                            <text x="230" y="380" font-family="Inter" font-size="12" fill="#60a5fa" text-anchor="middle">Trafo</text>
+                            <line id="sld-line-trafo-bus1" x1="160" y1="250" x2="160" y2="280" stroke="#d1d5db" stroke-width="2"/>
+                            <polygon id="sld-pms-trafo-bus1" points="160,280 150,290 160,300 170,290" fill="#d1d5db"/>
+                            <text x="160" y="297" font-family="Inter" font-size="8" fill="black" text-anchor="middle">PMS</text>
+                            <line id="sld-line-trafo-bus2" x1="300" y1="260" x2="300" y2="280" stroke="#d1d5db" stroke-width="2"/>
+                            <polygon id="sld-pms-trafo-bus2" points="300,280 290,290 300,300 310,290" fill="#d1d5db"/>
+                            <text x="300" y="297" font-family="Inter" font-size="8" fill="black" text-anchor="middle">PMS</text>
+                            <line id="sld-line-trafo-h" x1="160" y1="300" x2="300" y2="300" stroke="#d1d5db" stroke-width="2"/>
+                            <line id="sld-line-pmt-trafo" x1="230" y1="300" x2="230" y2="330" stroke="#d1d5db" stroke-width="2"/>
+                            <rect id="sld-pmt-trafo" x="220" y="330" width="20" height="20" fill="#d1d5db"/>
+                            <text x="230" y="345" font-family="Inter" font-size="8" fill="black" text-anchor="middle">PMT</text>
+                            <line id="sld-line-trafo-down" x1="230" y1="350" x2="230" y2="395" stroke="#d1d5db" stroke-width="2"/>
+                            <circle id="sld-trafo-c1" cx="230" cy="405" r="10" fill="#d1d5db"/>
+                            <circle id="sld-trafo-c2" cx="230" cy="415" r="10" fill="#d1d5db"/>
+                        </g>
+                        
+                        <!-- Bay Kopel -->
+                        <g data-component="kopel">
+                            <text x="530" y="320" font-family="Inter" font-size="12" fill="#60a5fa" text-anchor="middle">Kopel</text>
+                            <line id="sld-line-kopel-bus1" x1="460" y1="250" x2="460" y2="300" stroke="#d1d5db" stroke-width="2"/>
+                            <polygon id="sld-pms-kopel-bus1" points="460,270 450,280 460,290 470,280" fill="#d1d5db"/>
+                            <text x="460" y="287" font-family="Inter" font-size="8" fill="black" text-anchor="middle">PMS</text>
+                            <line id="sld-line-kopel-bus2" x1="600" y1="260" x2="600" y2="300" stroke="#d1d5db" stroke-width="2"/>
+                            <polygon id="sld-pms-kopel-bus2" points="600,270 590,280 600,290 610,280" fill="#d1d5db"/>
+                            <text x="600" y="287" font-family="Inter" font-size="8" fill="black" text-anchor="middle">PMS</text>
+                            <line id="sld-line-kopel-h" x1="460" y1="300" x2="600" y2="300" stroke="#d1d5db" stroke-width="2"/>
+                            <rect id="sld-pmt-kopel" x="530" y="285" width="20" height="20" fill="#d1d5db"/>
+                            <text x="540" y="300" font-family="Inter" font-size="8" fill="black" text-anchor="middle">PMT</text>
+                        </g>
+                    </g>
+                </svg>`;
+            }
+            
+            // Fungsi untuk memperbarui tampilan UI berdasarkan state terbaru
+            function updateUI(s, isError = false) {
+                // Konfigurasi warna
+                const onColor = isError ? '#ff4d4d' : '#e53e3e';
+                const offColor = '#d1d5db';
+                const powerFlowClass = 'power-flow';
+
+                // Update semua switch
+                for (const topic in s) {
+                    const el = document.getElementById(`switch-${topic}`);
+                    if (el) {
+                        el.checked = (s[topic] === 'on');
+                    }
+                }
+
+                const b1_energized = s.pmt === 'on';
+                const b2_energized = s.pmt2 === 'on';
+                const trafo_energized = s.pmt_trafo === 'on';
+                const kopel_active = s.kopel_bus1 === 'on' && s.kopel_bus2 === 'on' && s.pmt_kopel === 'on';
+                
+                const bus1_energized = (s.bus1 === 'on' && b1_energized) || (s.bus1_2 === 'on' && b2_energized) || (s.trafo_bus1 === 'on' && trafo_energized) || kopel_active;
+                const bus2_energized = (s.bus2 === 'on' && b1_energized) || (s.bus2_2 === 'on' && b2_energized) || (s.trafo_bus2 === 'on' && trafo_energized) || kopel_active;
+
+                function updateSvgElement(id, condition) {
+                    const el = document.getElementById(id);
+                    if (el) {
+                        el.setAttribute('stroke', condition ? onColor : offColor);
+                        el.setAttribute('fill', condition ? onColor : offColor);
+                        if (el.tagName.toLowerCase() === 'line' && condition && !isError) {
+                            el.classList.add(powerFlowClass);
+                        } else {
+                            el.classList.remove(powerFlowClass);
+                        }
+                    }
+                }
+                
+                document.querySelectorAll('#svg-container .blink').forEach(el => el.classList.remove('blink'));
+
+                updateSvgElement('sld-busbar1', bus1_energized);
+                updateSvgElement('sld-busbar2', bus2_energized);
+
+                updateSvgElement('sld-pms-line-b1', s.line === 'on');
+                updateSvgElement('sld-line-b1-1', s.line === 'on');
+                updateSvgElement('sld-pmt-b1', b1_energized);
+                updateSvgElement('sld-line-b1-2', b1_energized);
+                updateSvgElement('sld-line-b1-3', b1_energized);
+                updateSvgElement('sld-pms-bus1-b1', s.bus1 === 'on');
+                updateSvgElement('sld-line-bus1-b1', s.bus1 === 'on' && bus1_energized);
+                updateSvgElement('sld-pms-bus2-b1', s.bus2 === 'on');
+                updateSvgElement('sld-line-bus2-b1', s.bus2 === 'on' && bus2_energized);
+                
+                updateSvgElement('sld-pms-line-b2', s.line2 === 'on');
+                updateSvgElement('sld-line-b2-1', s.line2 === 'on');
+                updateSvgElement('sld-pmt-b2', b2_energized);
+                updateSvgElement('sld-line-b2-2', b2_energized);
+                updateSvgElement('sld-line-b2-3', b2_energized);
+                updateSvgElement('sld-pms-bus1-b2', s.bus1_2 === 'on');
+                updateSvgElement('sld-line-bus1-b2', s.bus1_2 === 'on' && bus1_energized);
+                updateSvgElement('sld-pms-bus2-b2', s.bus2_2 === 'on');
+                updateSvgElement('sld-line-bus2-b2', s.bus2_2 === 'on' && bus2_energized);
+
+                updateSvgElement('sld-pms-trafo-bus1', s.trafo_bus1 === 'on');
+                updateSvgElement('sld-line-trafo-bus1', s.trafo_bus1 === 'on' && bus1_energized);
+                updateSvgElement('sld-pms-trafo-bus2', s.trafo_bus2 === 'on');
+                updateSvgElement('sld-line-trafo-bus2', s.trafo_bus2 === 'on' && bus2_energized);
+                updateSvgElement('sld-line-trafo-h', (s.trafo_bus1 === 'on' || s.trafo_bus2 === 'on'));
+                updateSvgElement('sld-line-pmt-trafo', (s.trafo_bus1 === 'on' || s.trafo_bus2 === 'on'));
+                updateSvgElement('sld-pmt-trafo', trafo_energized);
+                updateSvgElement('sld-line-trafo-down', trafo_energized);
+                updateSvgElement('sld-trafo-c1', trafo_energized);
+                updateSvgElement('sld-trafo-c2', trafo_energized);
+
+                updateSvgElement('sld-pms-kopel-bus1', s.kopel_bus1 === 'on');
+                updateSvgElement('sld-line-kopel-bus1', s.kopel_bus1 === 'on');
+                updateSvgElement('sld-pms-kopel-bus2', s.kopel_bus2 === 'on');
+                updateSvgElement('sld-line-kopel-bus2', s.kopel_bus2 === 'on');
+                updateSvgElement('sld-pmt-kopel', kopel_active);
+                updateSvgElement('sld-line-kopel-h', kopel_active);
+
+                if(isError){
+                    document.querySelectorAll('#svg-container [fill="#ff4d4d"], #svg-container [stroke="#ff4d4d"]').forEach(el => el.classList.add('blink'));
+                }
+            }
+
+            // Menampilkan pesan error di UI dan memutar suara
+            function showError(message) {
+                errorMessageEl.textContent = message;
+                errorMessageEl.classList.remove('hidden');
+                updateUI(state, true);
+                playErrorSound();
+                addNotification(`ERROR: ${message}`, 'error'); // Notifikasi peristiwa error
+                
+                clearTimeout(errorTimeout);
+                errorTimeout = setTimeout(() => {
+                    errorMessageEl.classList.add('hidden');
+                    updateUI(state, false);
+                }, 4000);
+            }
+
+            // --- Logika Inti ---
+            function runInterlockLogic(currentState, action) {
+                // Salinan dari logika di Node-RED
+                let curr = { ...currentState, [action.topic]: action.payload };
+                
+                let result = {
+                    state: curr,
+                    error: false,
+                    errorMsg: ""
+                };
+
+                const kopelMasuk = curr.kopel_bus1 === "on" && curr.kopel_bus2 === "on" && curr.pmt_kopel === "on";
+
+                // Aturan 1: Bus 1 dan Bus 2 tidak boleh ON bersamaan kecuali kopel masuk
+                if (!kopelMasuk) {
+                    if (curr.bus1 === "on" && curr.bus2 === "on") {
+                        result.error = true; result.errorMsg = "Interlock: BUS 1 & 2 (Bay 1) tidak boleh ON bersamaan.";
+                    }
+                    if (curr.bus1_2 === "on" && curr.bus2_2 === "on") {
+                        result.error = true; result.errorMsg = "Interlock: BUS 1 & 2 (Bay 2) tidak boleh ON bersamaan.";
+                    }
+                    if (curr.trafo_bus1 === "on" && curr.trafo_bus2 === "on") {
+                        result.error = true; result.errorMsg = "Interlock: Trafo BUS 1 & 2 tidak boleh ON bersamaan.";
+                    }
+                }
+                
+                // Aturan 2: Urutan menyalakan/mematikan PMT
+                if (action.payload === 'on') { // Saat menyalakan
+                    if (action.topic === "pmt" && !(curr.line === "on" && (curr.bus1 === "on" || curr.bus2 === "on"))) {
+                         result.error = true; result.errorMsg = "Interlock: Nyalakan PMS Line & salah satu PMS Bus di Bay 1 sebelum PMT.";
+                    }
+                    if (action.topic === "pmt2" && !(curr.line2 === "on" && (curr.bus1_2 === "on" || curr.bus2_2 === "on"))) {
+                         result.error = true; result.errorMsg = "Interlock: Nyalakan PMS Line & salah satu PMS Bus di Bay 2 sebelum PMT.";
+                    }
+                    if (action.topic === "pmt_trafo" && !( (curr.trafo_bus1 === "on" || curr.trafo_bus2 === "on") )) {
+                         result.error = true; result.errorMsg = "Interlock: Nyalakan salah satu Trafo Bus sebelum PMT Trafo.";
+                    }
+                    if (action.topic === "pmt_kopel" && !(curr.kopel_bus1 === "on" && curr.kopel_bus2 === "on")) {
+                         result.error = true; result.errorMsg = "Interlock: Nyalakan Kopel Bus 1 & 2 sebelum PMT Kopel.";
+                    }
+                } else { // Saat mematikan
+                    if (curr.pmt === 'on' && (action.topic === 'line' || action.topic === 'bus1' || action.topic === 'bus2')) {
+                        result.error = true; result.errorMsg = "Interlock: Matikan PMT Bay 1 terlebih dahulu.";
+                    }
+                    if (curr.pmt2 === 'on' && (action.topic === 'line2' || action.topic === 'bus1_2' || action.topic === 'bus2_2')) {
+                        result.error = true; result.errorMsg = "Interlock: Matikan PMT Bay 2 terlebih dahulu.";
+                    }
+                    if (curr.pmt_trafo === 'on' && (action.topic === 'trafo_bus1' || action.topic === 'trafo_bus2')) {
+                        result.error = true; result.errorMsg = "Interlock: Matikan PMT Trafo terlebih dahulu.";
+                    }
+                    if (curr.pmt_kopel === 'on' && (action.topic === 'kopel_bus1' || action.topic === 'kopel_bus2')) {
+                        result.error = true; result.errorMsg = "Interlock: Matikan PMT Kopel terlebih dahulu.";
+                    }
+                }
+
+                return result;
+            }
+            
+            // Fungsi untuk memperbarui UI data real-time
+            function updateRealtimeDataUI(component, data) {
+                const voltageEl = document.getElementById(`data-${component}-voltage`);
+                const currentEl = document.getElementById(`data-${component}-current`);
+                const powerEl = document.getElementById(`data-${component}-power`);
+                
+                if (voltageEl) voltageEl.textContent = data.voltage;
+                if (currentEl) currentEl.textContent = data.current;
+                if (powerEl) powerEl.textContent = data.power;
+            }
+
+            // Fungsi untuk simulasi dan kirim data real-time
+            function startRealtimeDataSimulation() {
+                setInterval(() => {
+                    const line1Data = {
+                        voltage: (140 + Math.random() * 10).toFixed(2), // kV
+                        current: (50 + Math.random() * 20).toFixed(2), // A
+                        power: (10 + Math.random() * 5).toFixed(2)    // MW
+                    };
+                    const line2Data = {
+                        voltage: (140 + Math.random() * 10).toFixed(2),
+                        current: (60 + Math.random() * 15).toFixed(2),
+                        power: (12 + Math.random() * 6).toFixed(2)
+                    };
+                    const trafoData = {
+                        voltage: (140 + Math.random() * 10).toFixed(2),
+                        current: (80 + Math.random() * 25).toFixed(2),
+                        power: (15 + Math.random() * 8).toFixed(2)
+                    };
+                    const kopelData = {
+                        voltage: (140 + Math.random() * 10).toFixed(2),
+                        current: (30 + Math.random() * 10).toFixed(2),
+                        power: (5 + Math.random() * 3).toFixed(2)
+                    };
+
+                    client.publish("data/line1", JSON.stringify(line1Data));
+                    client.publish("data/line2", JSON.stringify(line2Data));
+                    client.publish("data/trafo", JSON.stringify(trafoData));
+                    client.publish("data/kopel", JSON.stringify(kopelData));
+                }, 3000); // Update setiap 3 detik
+            }
+
+            // --- Koneksi MQTT & Simulasi Data ---
+            function connectMqtt() {
+                // Menambahkan opsi client ID dan reconnect untuk stabilitas
+                const options = {
+                    connectTimeout: 10000,
+                    clientId: 'mqttjs_' + Math.random().toString(16).substr(2, 8),
+                    reconnectPeriod: 2000
+                };
+                client = mqtt.connect(brokerUrl, options);
+
+                client.on('connect', () => {
+                    connectionStatusEl.textContent = 'Terhubung ke Broker MQTT';
+                    connectionStatusEl.classList.replace('bg-yellow-600', 'bg-green-600');
+                    addNotification('Berhasil terhubung ke broker MQTT.');
+                    client.subscribe(topics, (err) => {
+                        if (err) {
+                            console.error('Gagal subscribe:', err);
+                            showError('Gagal subscribe ke topik kontrol.');
+                        }
+                    });
+                    // Mulai simulasi data real-time setelah terhubung
+                    startRealtimeDataSimulation();
+                });
+
+                client.on('message', (topic, message) => {
+                    const payload = message.toString();
+                    // Cek apakah topik adalah data real-time
+                    if (topic.startsWith("data/")) {
+                        const [_, component] = topic.split('/');
+                        const data = JSON.parse(payload);
+                        updateRealtimeDataUI(component, data);
+                    } else {
+                        state[topic] = payload;
+                        updateUI(state);
+                        addNotification(`Perintah '${topic}' diubah menjadi: ${payload}`, 'success'); // Notifikasi perubahan status
+                    }
+                });
+
+                client.on('error', (err) => {
+                    console.error('Koneksi error:', err);
+                    connectionStatusEl.textContent = 'Koneksi Gagal/Error';
+                    connectionStatusEl.classList.replace('bg-green-600', 'bg-red-600');
+                    addNotification('Koneksi MQTT error.', 'error');
+                });
+
+                client.on('close', () => {
+                    connectionStatusEl.textContent = 'Koneksi Terputus. Mencoba lagi...';
+                    connectionStatusEl.classList.replace('bg-green-600', 'bg-yellow-600');
+                    addNotification('Koneksi MQTT terputus. Mencoba terhubung kembali.', 'info');
+                    // Tidak perlu setTimeout karena MQTT.js akan otomatis reconnect
+                });
+            }
+            
+            // --- Event Listeners ---
+            switches.forEach(sw => {
+                sw.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    
+                    const topic = sw.dataset.topic;
+                    const currentValue = state[topic];
+                    const newValue = currentValue === 'on' ? 'off' : 'on';
+
+                    const action = { topic, payload: newValue };
+                    const result = runInterlockLogic(state, action);
+
+                    if (result.error) {
+                        showError(result.errorMsg);
+                        sw.checked = (currentValue === 'on');
+                    } else {
+                        if (client && client.connected) {
+                            client.publish(topic, newValue);
+                            addNotification(`Mengirim perintah: ${topic} -> ${newValue}`, 'success'); // Notifikasi perintah yang berhasil
+                        } else {
+                            showError("Tidak terhubung ke broker. Perintah tidak dapat dikirim.");
+                        }
+                    }
+                });
+            });
+
+            // --- Mulai Aplikasi ---
+            initializeSLD();
+            updateUI(state);
+            connectMqtt();
+        });
+    </script>
+</body>
+</html>
