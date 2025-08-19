@@ -150,14 +150,15 @@
     <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
 </head>
 <body class="text-white p-4">
+
     <div class="max-w-7xl mx-auto">
         <!-- Tombol Logout -->
 <div class="flex justify-end mb-4">
 <button onclick="logout()" class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg">
 Logout
 </button>
-    <div class="max-w-7xl mx-auto">
-        <h1 class="text-2xl font-bold text-center mb-4">Monitoring Gardu Induk</h1>
+</div>
+        <h1 class="text-2xl font-bold text-center mb-4">Monitoring Gardu Induk </h1>
         
         <div id="connection-status" class="text-center mb-4 p-2 rounded-md bg-yellow-600 text-white transition-all">
             Menghubungkan ke Broker MQTT...
@@ -257,6 +258,11 @@ Logout
     if (localStorage.getItem("isLoggedIn") !== "true") {
         window.location.href = "login.html"; // kalau belum login, arahkan ke halaman login
     }
+    // Fungsi logout
+function logout() {
+localStorage.removeItem("isLoggedIn");
+window.location.href = "login.html";
+}
         document.addEventListener('DOMContentLoaded', () => {
             // --- Konfigurasi ---
             // Mengubah broker MQTT ke server publik yang lebih stabil
@@ -677,5 +683,4 @@ Logout
         });
     </script>
 </body>
-
 </html>
